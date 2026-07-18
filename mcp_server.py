@@ -3,7 +3,8 @@
 Exposes inference as an MCP tool via SSE transport.
 Mount on existing FastAPI app: app.mount("/mcp/", create_sse_server(mcp))
 
-Option B: pass solana_key (base58 private key) for auto-signing.
+Auth: provide your Solana private key (base58) as solana_key.
+The server generates a nonce, signs it, and sends auth headers automatically.
 """
 
 import base64
@@ -37,15 +38,12 @@ def _derive_keypair(base58_key: str) -> tuple:
     decoded = base58.b58decode(base58_key)
 
     if len(decoded) == 64:
-        # Full keypair format: seed (32B) || public_key (32B)
         seed = decoded[:32]
     elif len(decoded) == 32:
-        # Seed-only format
         seed = decoded
     else:
         raise ValueError(
-            f"Invalid key length: {len(decoded)} bytes "
-            f"(expected 32 or 64)"
+            f"Invalid key length: {len(decoded)} bytes (expected 32 or 64)"
         )
 
     signing_key = nacl.signing.SigningKey(seed)
@@ -71,42 +69,33 @@ async def inference(
     messages: str,
     max_tokens: int = 256,
     solana_key: str = "",
-    x_address: str = "",
-    x_nonce: str = "",
-    x_signature: str = "",
 ) -> str:
     """DeepSeek V4 Flash inference via BridgeNode.
 
     Sends a chat completion request to DeepSeek V4 Flash.
     Pre-deposit USDC to BHMDv3ri3LBEZjEzJgDZeUiguVX7LmsCstTXbM3dL8rN (Solana mainnet).
 
-    Two auth modes:
-    - Easy: provide `solana_key` (base58 private key) — server signs automatically
-    - Manual: provide `x_address`, `x_nonce`, `x_signature` (ed25519 signature of a UUID nonce)
+    Auth: provide your Solana private key (base58) as solana_key.
+    The server auto-generates a UUID nonce and signs it — no manual signing needed.
 
     Args:
         messages: JSON string of messages array, e.g. [{"role": "user", "content": "Hello"}]
         max_tokens: Maximum tokens in the response (default 256)
-        solana_key: (Optional) Base58-encoded Solana private key for auto-signing
-        x_address: (Optional) Solana wallet address for manual auth
-        x_nonce: (Optional) UUID nonce for manual auth
-        x_signature: (Optional) Base64-encoded ed25519 signature for manual auth
+        solana_key: Base58-encoded Solana private key for auth (required)
 
     Returns:
         The assistant's response text
     """
-    # Auto-sign if solana_key provided
-    if solana_key:
-        try:
-            x_address, x_nonce, x_signature = _auto_sign(solana_key)
-        except Exception as e:
-            return f"Error: failed to sign with solana_key: {e}"
-
-    if not all([x_address, x_nonce, x_signature]):
+    if not solana_key:
         return (
-            "Error: Missing authentication. Provide either 'solana_key' "
-            "(auto-sign) or all three: x_address + x_nonce + x_signature (manual)."
+            "Error: 'solana_key' is required. "
+            "Provide your base58-encoded Solana private key as solana_key."
         )
+
+    try:
+        x_address, x_nonce, x_signature = _auto_sign(solana_key)
+    except Exception as e:
+        return f"Error: failed to sign with solana_key: {e}"
 
     try:
         parsed_messages = json.loads(messages)
@@ -135,9 +124,17 @@ async def inference(
         elapsed = time.perf_counter() - t0
 
         if resp.status_code == 402:
+            cost_str = ""
+            try:
+                body = resp.json()
+                required = body.get("required", {})
+                if required:
+                    cost_str = f" Requires {required.get('amount', '?')} {required.get('asset', 'USDC')}."
+            except Exception:
+                pass
             return (
-                f"Payment required. Pre-deposit USDC to "
-                f"BHMDv3ri3LBEZjEzJgDZeUiguVX7LmsCstTXbM3dL8rN. "
+                f"Payment required.{cost_str} "
+                f"Pre-deposit USDC to BHMDv3ri3LBEZjEzJgDZeUiguVX7LmsCstTXbM3dL8rN. "
                 f"Balance check at {BASE_URL}/v1/balance/{x_address}"
             )
 

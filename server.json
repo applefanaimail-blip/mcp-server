@@ -1,0 +1,23 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.applefanaimail-blip/mcp-server",
+  "title": "BridgeNode — DeepSeek V4 Flash via x402",
+  "description": "DeepSeek V4 Flash inference via x402 protocol. Pay per request with Solana USDC. No registration, no API keys, no KYC.",
+  "version": "1.0.0",
+  "homepage": "https://bridgenode.cc",
+  "repository": {
+    "type": "github",
+    "url": "https://github.com/applefanaimail-blip/mcp-server"
+  },
+  "authentication": {
+    "required": true,
+    "schemes": ["custom"],
+    "description": "Ed25519 signature auth: send X-Address (Solana wallet) + X-Nonce (UUID) + X-Signature (base64 ed25519 of nonce) as tool arguments"
+  },
+  "remotes": [
+    {
+      "type": "sse",
+      "url": "https://bridgenode.cc/mcp/sse"
+    }
+  ]
+}

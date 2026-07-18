@@ -1,19 +1,14 @@
 # BridgeNode MCP Server
 
-DeepSeek V4 Flash inference via [Model Context Protocol](https://modelcontextprotocol.io/). Pay per request with Solana USDC via x402 protocol — no registration, no API keys, no KYC.
+**DeepSeek V4 Flash inference via [Model Context Protocol](https://modelcontextprotocol.io/)**
 
-## Endpoint
-
-| Transport | URL |
-|-----------|-----|
-| SSE | `https://bridgenode.cc/mcp/sse` |
-| Messages | `https://bridgenode.cc/mcp/messages/` |
+Pay per request with Solana USDC via x402 protocol — no registration, no API keys, no KYC.
 
 ## Quick Start
 
-### Claude Desktop
+Connect in 10 seconds:
 
-Add to your `claude_desktop_config.json`:
+### Claude Desktop
 
 ```json
 {
@@ -27,7 +22,7 @@ Add to your `claude_desktop_config.json`:
 
 ### Cursor
 
-Settings → Cursor Settings → MCP → Add new global MCP server:
+Settings → Cursor Settings → MCP → Add global MCP server:
 
 ```json
 {
@@ -55,26 +50,61 @@ openclaw mcp add --url https://bridgenode.cc/mcp/sse
 
 Call the `inference` tool with:
 
-- `messages` — JSON string of OpenAI chat messages
-- `max_tokens` — (optional, default 256)
-- `x_address` — your Solana wallet address
-- `x_nonce` — UUID v4 for signature
-- `x_signature` — base64 ed25519 signature of the nonce (sign with your Solana private key)
+| Parameter | Type | Required | Description |
+|-----------|------|:--------:|-------------|
+| `messages` | string | ✅ | JSON string of OpenAI chat messages |
+| `max_tokens` | int | ❌ | Max tokens (default 256) |
+| `solana_key` | string | ✅ | Base58-encoded Solana private key |
 
-### Authentication
+### Example
 
-1. Generate a UUID v4 nonce
-2. Sign the nonce bytes with your Solana wallet's ed25519 private key
-3. Base64-encode the signature
-4. Send `x_address`, `x_nonce`, `x_signature` as tool arguments
+```
+inference(messages='[{"role": "user", "content": "Hello, what is AI?"}]', solana_key="<your_base58_key>")
+```
 
-### Payment
+The server auto-generates a UUID nonce, signs it with your key, and sends the request. One parameter — done.
 
-Pre-deposit USDC to: `BHMDv3ri3LBEZjEzJgDZeUiguVX7LmsCstTXbM3dL8rN` (Solana mainnet)
+## Step 1 — Deposit USDC
 
-Check balance: `https://bridgenode.cc/v1/balance/{your_address}`
+Send USDC (Solana mainnet) to:
 
-Cost: ~$0.001–0.005 per request (dynamic, based on token usage)
+```
+BHMDv3ri3LBEZjEzJgDZeUiguVX7LmsCstTXbM3dL8rN
+```
+
+**Asset:** `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` (USDC)
+
+Check your balance:
+
+```
+https://bridgenode.cc/v1/balance/{your_wallet_address}
+```
+
+## Step 2 — Call inference
+
+Use any MCP client. **Auto-auth** via `solana_key`:
+
+```
+inference(messages='[{"role": "user", "content": "Hello"}]', solana_key="<your_base58_key>")
+```
+
+Cost: ~$0.001–0.005 per request (dynamic, based on token usage).
+
+## Endpoint
+
+| Transport | URL |
+|-----------|-----|
+| SSE | `https://bridgenode.cc/mcp/sse` |
+| Messages | `https://bridgenode.cc/mcp/messages/` |
+
+## How it works
+
+1. Agent connects to `bridgenode.cc/mcp/sse` via standard MCP SSE transport
+2. Calls `inference()` with messages + solana_key
+3. MCP server decodes the key, generates a UUID nonce, creates an ed25519 signature
+4. Sends `POST /v1/inference` to BridgeNode with `X-Address`, `X-Nonce`, `X-Signature` headers
+5. BridgeNode verifies the signature, checks balance, proxies to DeepSeek
+6. Response returned to the agent
 
 ## Links
 

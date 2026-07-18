@@ -2,13 +2,19 @@
 
 Exposes inference as an MCP tool via SSE transport.
 Mount on existing FastAPI app: app.mount("/mcp/", create_sse_server(mcp))
+
+Option B: pass solana_key (base58 private key) for auto-signing.
 """
 
+import base64
 import json
 import logging
 import time
+import uuid
 
+import base58
 import httpx
+import nacl.signing
 from mcp.server.fastmcp import FastMCP
 from mcp.server.sse import SseServerTransport
 from starlette.applications import Starlette
@@ -22,10 +28,49 @@ logger = logging.getLogger(__name__)
 mcp = FastMCP("BridgeNode")
 
 
+def _derive_keypair(base58_key: str) -> tuple:
+    """Decode a base58 Solana keypair and return (signing_key, address).
+
+    Accepts either a 64-byte keypair (seed || public_key) or a 32-byte seed.
+    Returns a nacl SigningKey and base58-encoded Solana address.
+    """
+    decoded = base58.b58decode(base58_key)
+
+    if len(decoded) == 64:
+        # Full keypair format: seed (32B) || public_key (32B)
+        seed = decoded[:32]
+    elif len(decoded) == 32:
+        # Seed-only format
+        seed = decoded
+    else:
+        raise ValueError(
+            f"Invalid key length: {len(decoded)} bytes "
+            f"(expected 32 or 64)"
+        )
+
+    signing_key = nacl.signing.SigningKey(seed)
+    verify_key = signing_key.verify_key
+    address = base58.b58encode(bytes(verify_key)).decode()
+    return signing_key, address
+
+
+def _auto_sign(base58_key: str) -> tuple:
+    """Generate nonce and sign it with the given key.
+
+    Returns (x_address, x_nonce, x_signature).
+    """
+    signing_key, address = _derive_keypair(base58_key)
+    nonce = str(uuid.uuid4())
+    sig_bytes = signing_key.sign(nonce.encode()).signature
+    sig_b64 = base64.b64encode(sig_bytes).decode()
+    return address, nonce, sig_b64
+
+
 @mcp.tool()
 async def inference(
     messages: str,
     max_tokens: int = 256,
+    solana_key: str = "",
     x_address: str = "",
     x_nonce: str = "",
     x_signature: str = "",
@@ -35,21 +80,33 @@ async def inference(
     Sends a chat completion request to DeepSeek V4 Flash.
     Pre-deposit USDC to BHMDv3ri3LBEZjEzJgDZeUiguVX7LmsCstTXbM3dL8rN (Solana mainnet).
 
-    Auth: generate a UUID nonce, sign it with your Solana private key (ed25519),
-    and provide X-Address (your Solana wallet), X-Nonce (the UUID), X-Signature (the base64 signature).
+    Two auth modes:
+    - Easy: provide `solana_key` (base58 private key) — server signs automatically
+    - Manual: provide `x_address`, `x_nonce`, `x_signature` (ed25519 signature of a UUID nonce)
 
     Args:
         messages: JSON string of messages array, e.g. [{"role": "user", "content": "Hello"}]
         max_tokens: Maximum tokens in the response (default 256)
-        x_address: Solana wallet address for auth
-        x_nonce: UUID nonce for signature verification
-        x_signature: Base64-encoded ed25519 signature of the nonce
+        solana_key: (Optional) Base58-encoded Solana private key for auto-signing
+        x_address: (Optional) Solana wallet address for manual auth
+        x_nonce: (Optional) UUID nonce for manual auth
+        x_signature: (Optional) Base64-encoded ed25519 signature for manual auth
 
     Returns:
         The assistant's response text
     """
+    # Auto-sign if solana_key provided
+    if solana_key:
+        try:
+            x_address, x_nonce, x_signature = _auto_sign(solana_key)
+        except Exception as e:
+            return f"Error: failed to sign with solana_key: {e}"
+
     if not all([x_address, x_nonce, x_signature]):
-        return "Error: Missing authentication headers. Provide X-Address, X-Nonce, and X-Signature."
+        return (
+            "Error: Missing authentication. Provide either 'solana_key' "
+            "(auto-sign) or all three: x_address + x_nonce + x_signature (manual)."
+        )
 
     try:
         parsed_messages = json.loads(messages)
@@ -78,7 +135,11 @@ async def inference(
         elapsed = time.perf_counter() - t0
 
         if resp.status_code == 402:
-            return f"Payment required. Pre-deposit USDC to BHMDv3ri3LBEZjEzJgDZeUiguVX7LmsCstTXbM3dL8rN. Balance check at {BASE_URL}/v1/balance/{x_address}"
+            return (
+                f"Payment required. Pre-deposit USDC to "
+                f"BHMDv3ri3LBEZjEzJgDZeUiguVX7LmsCstTXbM3dL8rN. "
+                f"Balance check at {BASE_URL}/v1/balance/{x_address}"
+            )
 
         if resp.status_code != 200:
             body = resp.text[:500]
@@ -93,7 +154,12 @@ async def inference(
         text = choices[0].get("message", {}).get("content", "")
         meta = data.get("response_metadata", {})
 
-        logger.info(f"MCP inference addr={x_address[:12]}... tokens={meta.get('token_stats', {})} cost=${meta.get('cost_usd', 0):.6f} time={elapsed:.2f}s")
+        logger.info(
+            f"MCP inference addr={x_address[:12]}... "
+            f"tokens={meta.get('token_stats', {})} "
+            f"cost=${meta.get('cost_usd', 0):.6f} "
+            f"time={elapsed:.2f}s"
+        )
 
         return text.strip()
 

@@ -1,0 +1,65 @@
+{
+  "$schema": "https://pulsemcp.com/schemas/mcp-server.schema.json",
+  "name": "bridgenode/mcp-server",
+  "description": "DeepSeek V4 Flash inference via BridgeNode. Pay per request with Solana USDC via x402 protocol. No registration, no API keys, no KYC.",
+  "repository": {
+    "url": "https://github.com/bridgenode/mcp-server",
+    "source": "github"
+  },
+  "version": "1.0.0",
+  "serverInfo": {
+    "name": "BridgeNode MCP Server",
+    "version": "1.0.0"
+  },
+  "authentication": {
+    "required": true,
+    "schemes": ["custom"],
+    "description": "Ed25519 signature auth: generate UUID nonce, sign with Solana private key, send X-Address + X-Nonce + X-Signature as tool arguments"
+  },
+  "tools": [
+    {
+      "name": "inference",
+      "description": "DeepSeek V4 Flash chat completion",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "messages": {
+            "type": "string",
+            "description": "JSON string of messages array, e.g. [{\"role\": \"user\", \"content\": \"Hello\"}]"
+          },
+          "max_tokens": {
+            "type": "integer",
+            "description": "Maximum tokens in response (default 256)",
+            "default": 256
+          },
+          "x_address": {
+            "type": "string",
+            "description": "Solana wallet address"
+          },
+          "x_nonce": {
+            "type": "string",
+            "description": "UUID nonce for signature"
+          },
+          "x_signature": {
+            "type": "string",
+            "description": "Base64 ed25519 signature of the nonce"
+          }
+        },
+        "required": ["messages", "x_address", "x_nonce", "x_signature"]
+      }
+    }
+  ],
+  "resources": [],
+  "prompts": [],
+  "packages": [
+    {
+      "registryType": "http",
+      "identifier": "https://bridgenode.cc/mcp/sse",
+      "version": "1.0.0",
+      "transport": {
+        "type": "sse",
+        "endpoint": "https://bridgenode.cc/mcp/sse"
+      }
+    }
+  ]
+}
